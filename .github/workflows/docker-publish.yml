@@ -1,0 +1,87 @@
+name: Publish Docker Image
+
+on:
+  # Allows manual triggering
+  workflow_dispatch:
+  push:
+    branches:
+      # Only triggers on your custom branches
+      - 'develop-lj'
+      - 'v1'
+  schedule:
+    ## Nightly Docker Image Rebuild (1:05am daily)
+    - cron: '5 1 * * *'
+
+env:
+  DOCKER_IMAGE: ${{ github.repository_owner }}/gluetun
+
+jobs:
+  push_to_registry:
+    name: Push Docker image to Docker Hub
+    # Ensure only runs in the lj020326 repo and on specified branches
+    if: >
+      github.repository == 'lj020326/docker-gluetun' &&
+      (github.ref == 'refs/heads/develop-lj' || github.ref == 'refs/heads/v1')
+    runs-on: ubuntu-latest
+    steps:
+      - name: If the same workflow is already running from a previous commit, wait for it to finish
+        uses: ahmadnassri/action-workflow-queue@v1
+
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      # === DOCKER BUILD SETUP PHASE ===
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3.7.0
+        with:
+          platforms: ${{ steps.git.outputs.platforms }}
+
+      - name: Get current date
+        id: date
+        run: echo "date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+
+      # Set a unique build ID for the current matrix version
+      - name: Set unique build ID
+        id: set-build-id
+        run: echo "BUILD_ID=build-${{ github.run_number }}" >> $GITHUB_ENV
+
+      # Determine tags dynamically based on branch
+      - name: Determine Docker tags
+        id: meta
+        run: |
+          # Extract branch name (e.g., 'v1' or 'develop-lj')
+          BRANCH_NAME=$(echo "${{ github.ref }}" | sed -e 's,.*/\(.*\),\1,')
+          
+          # Base tags: branch name, SHA, build number, and date
+          TAGS="${{ env.DOCKER_IMAGE }}:${BRANCH_NAME}"
+          TAGS="$TAGS,${{ env.DOCKER_IMAGE }}:${{ github.sha }}"
+          TAGS="$TAGS,${{ env.DOCKER_IMAGE }}:build-${{ github.run_number }}"
+          TAGS="$TAGS,${{ env.DOCKER_IMAGE }}:${{ steps.date.outputs.date }}"
+          
+          # Add 'latest' only for the develop-lj branch
+          if [[ "$BRANCH_NAME" == "develop-lj" ]]; then
+            TAGS="$TAGS,${{ env.DOCKER_IMAGE }}:latest"
+          fi
+          
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3.12.0
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.DOCKER_HUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          # Use the dynamic tags from the 'meta' step
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            IMAGE_VERSION=${{ github.sha }}
+            BUILD_ID=${{ env.BUILD_ID }}
+            BUILD_DATE=${{ steps.date.outputs.date }}
