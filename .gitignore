@@ -1,5 +1,7 @@
 scratch.txt
 
 .idea/
+.vscode/
+
 save/
 .DS_Store

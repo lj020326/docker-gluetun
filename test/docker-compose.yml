@@ -1,0 +1,250 @@
+
+networks:
+  net:
+    attachable: true
+    ipam:
+      config:
+        - subnet: 192.168.10.0/24
+
+  socket_proxy:
+    attachable: true
+    ipam:
+      config:
+        - subnet: 192.168.11.0/24
+
+  traefik_public:
+    external: true
+
+volumes:
+  model-cache: {}
+
+
+
+
+services:
+  ########################
+  ## BASE GROUP SERVICES
+  traefik:
+    image: traefik:v3.6.1
+    container_name: traefik
+    restart: unless-stopped
+    environment:
+      ## app envs
+      PGID: '895'
+      PUID: '1003'
+      TZ: America/New_York
+    networks:
+      - traefik_public
+    ports:
+      - mode: host
+        protocol: tcp
+        published: 80
+        target: 80
+      - mode: host
+        protocol: tcp
+        published: 443
+        target: 443
+    labels:
+      - traefik.enable=true
+      - traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https
+      - traefik.http.routers.http-catchall.entrypoints=http
+      - traefik.http.routers.http-catchall.middlewares=redirect-to-https
+      - traefik.http.routers.http-catchall.rule=HostRegexp(`{host:.+}`)
+      - traefik.http.routers.ping.entrypoints=https
+      - traefik.http.routers.ping.rule=Host(`traefik.media.johnson.int`) && PathPrefix(`/ping`)
+      - traefik.http.routers.ping.service=ping@internal
+      - traefik.http.routers.traefik-rtr.service=api@internal
+      - traefik.http.routers.traefik-rtr.entrypoints=https
+      - traefik.http.routers.traefik-rtr.rule=Host(`traefik.media.johnson.int`)
+      - traefik.http.services.api.loadbalancer.server.port=8080
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /home/media/docker/traefik:/etc/traefik
+      - /home/media/docker/traefik/certs:/certs
+      - /home/media/docker/shared:/shared
+
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: socket-proxy
+    restart: always
+    privileged: true
+    environment:
+      ## app envs
+      AUTH: 0
+      BUILD: 0
+      COMMIT: 0
+      CONFIGS: 0
+      CONTAINERS: 1
+      CONTAINERS_CREATE: 1
+      CONTAINERS_DELETE: 1
+      CONTAINERS_START: 1
+      CONTAINERS_UPDATE: 1
+      DELETE: 1
+      DISTRIBUTION: 0
+      EVENTS: 1
+      EXEC: 0
+      IMAGES: 1
+      IMAGES_DELETE: 1
+      INFO: 1
+      LOG_LEVEL: debug
+      NETWORKS: 1
+      NODES: 0
+      PING: 1
+      PLUGINS: 0
+      POST: 1
+      SECRETS: 0
+      SERVICES: 1
+      SESSION: 0
+      SWARM: 0
+      SYSTEM: 0
+      TASKS: 1
+      VERSION: 1
+      VOLUMES: 1
+    networks:
+      - socket_proxy
+    ports:
+      - 2375:2375
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  whoami:
+    image: containous/whoami
+    container_name: whoami
+    networks:
+      - traefik_public
+    ports:
+      - protocol: tcp
+        published: 9080
+        target: 80
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.whoami.entrypoints=https
+      - traefik.http.routers.whoami.rule=Host(`whoami.media.dettonville.cloud`,`whoami.media.johnson.int`)
+      - traefik.http.services.whoami.loadbalancer.server.port=80
+
+  portainer-agent:
+    image: portainer/agent:latest
+    container_name: portainer-agent
+    networks:
+      - socket_proxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+
+  portainer:
+    image: portainer/portainer-ce:sts
+    container_name: portainer
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges=true
+    environment:
+      ## app envs
+      TZ: America/New_York
+    networks:
+      - traefik_public
+      - socket_proxy
+    ports:
+      - mode: host
+        protocol: tcp
+        published: 9010
+        target: 9000
+    command: >-
+      -H tcp://tasks.portainer-agent:9001 --tlsskipverify
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.portainer-rtr.entrypoints=https
+      - traefik.http.routers.portainer-rtr.rule=Host(`portainer.media.johnson.int`)
+      - traefik.http.routers.portainer-rtr.service=portainer-svc
+      - traefik.http.services.portainer-svc.loadbalancer.server.port=9000
+    volumes:
+      - /etc/localtime:/etc/localtime
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/volumes:/var/lib/docker/volumes
+      - /home/media/docker/portainer/data:/data
+
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: dozzle
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges=true
+    environment:
+      ## app envs
+      DOCKER_HOST: tcp://socket-proxy:2375
+      DOZZLE_FILTER: status=running
+      DOZZLE_LEVEL: info
+    networks:
+      - traefik_public
+      - socket_proxy
+    ports:
+      - mode: host
+        protocol: tcp
+        published: 8080
+        target: 8080
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.dozzle-rtr.entrypoints=https
+      - traefik.http.routers.dozzle-rtr.rule=Host(`dozzle.media.johnson.int`)
+      - traefik.http.routers.dozzle-rtr.service=dozzle-svc
+      - traefik.http.services.dozzle-svc.loadbalancer.server.port=8080
+
+  openvpn:
+    image: lj020326/gluetun:latest
+    container_name: gluetun
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      # NordVPN OpenVPN settings
+      VPN_SERVICE_PROVIDER: nordvpn
+      VPN_TYPE: openvpn
+      OPENVPN_USER: username123
+      OPENVPN_PASSWORD: passw0rd123
+      SERVER_COUNTRIES: United States
+      SERVER_CITIES: Toronto,New York,Montreal
+      # SERVER_CITIES: Toronto;New York;Montreal   # Gluetun uses comma-separated
+      # Optional: specific server or group
+      # SERVER_NAME: us8481.nordvpn.com
+      OPENVPN_PORT_FORWARDING: off   # set to 'on' if you want port forwarding later
+      # Kill-switch & firewall (Gluetun's default is very strict)
+      FIREWALL: on
+      FIREWALL_VPN_INPUT_PORTS: ""   # leave empty unless you need specific inbound
+      TZ: America/New_York
+      # Logging
+      LOG_LEVEL: info
+      # Optional: allow LAN access (your traefik_public subnets)
+      EXTRA_SUBNETS: 192.168.12.0/24,192.168.13.0/24
+      # Optional: health checks
+      HEALTHCHECK_ENABLED: on
+    ports:
+      # Expose qBittorrent web UI (via Gluetun)
+      # Gluetun forwards 8168 from child container
+      - "8168:8168"
+    volumes:
+      - gluetun:/gluetun   # persistent config (optional)
+    networks:
+      - traefik_public   # needed for Traefik to reach the web UI
+
+  downloader:
+    image: downloader:latest
+    container_name: downloader
+    network_mode: service:openvpn
+    restart: always
+    environment:
+      ## app envs
+      PGID: '895'
+      PUID: '1003'
+      TZ: America/New_York
+      WEBUI_PORT: 8168
+    depends_on:
+      - openvpn
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.downloader.entrypoints=https
+      - traefik.http.routers.downloader.rule=Host(`downloads.media.johnson.int`)
+      - traefik.http.services.downloader.loadbalancer.server.port=8168
+    volumes:
+      - /home/media/docker/downloader:/config
+      - /export/media/downloads:/downloads
