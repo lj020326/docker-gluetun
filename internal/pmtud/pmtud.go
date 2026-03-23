@@ -7,13 +7,16 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/qdm12/gluetun/internal/firewall"
+	"github.com/qdm12/gluetun/internal/firewall/iptables"
 	"github.com/qdm12/gluetun/internal/pmtud/constants"
 	"github.com/qdm12/gluetun/internal/pmtud/icmp"
 	"github.com/qdm12/gluetun/internal/pmtud/tcp"
 )
 
-var ErrPMTUDFailICMPAndTCP = errors.New("PMTUD succeeded with ICMP but failed with TCP")
+var (
+	ErrICMPOkTCPFail   = errors.New("PMTUD succeeded with ICMP but failed with TCP")
+	ErrICMPFailTCPFail = errors.New("PMTUD failed with both ICMP and TCP")
+)
 
 // PathMTUDiscover discovers the maximum MTU using both ICMP and TCP.
 // Multiple ICMP addresses and TCP addresses can be specified for redundancy.
@@ -71,14 +74,17 @@ func PathMTUDiscover(ctx context.Context, icmpAddrs []netip.Addr, tcpAddrs []net
 	}
 	mtu, err = tcp.PathMTUDiscover(ctx, tcpAddrs, minMTU, maxPossibleMTU, tryTimeout, fw, logger)
 	if err != nil {
-		if errors.Is(err, firewall.ErrMarkMatchModuleMissing) {
+		if errors.Is(err, iptables.ErrMarkMatchModuleMissing) {
 			logger.Debugf("aborting TCP path MTU discovery: %s", err)
 			if icmpSuccess {
 				return maxPossibleMTU, nil // only rely on ICMP PMTUD results
 			}
 		}
-		return 0, fmt.Errorf("%w - ignoring ICMP obtained MTU %d",
-			ErrPMTUDFailICMPAndTCP, maxPossibleMTU)
+		if icmpSuccess {
+			return 0, fmt.Errorf("%w - discarding ICMP obtained MTU %d",
+				ErrICMPOkTCPFail, maxPossibleMTU)
+		}
+		return 0, fmt.Errorf("%w", ErrICMPFailTCPFail)
 	}
 	logger.Debugf("TCP path MTU discovery found maximum valid MTU %d", mtu)
 	return mtu, nil

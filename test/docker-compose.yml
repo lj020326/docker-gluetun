@@ -204,20 +204,22 @@ services:
       OPENVPN_PASSWORD: passw0rd123
       SERVER_COUNTRIES: United States
       SERVER_CITIES: Toronto,New York,Montreal
-      # SERVER_CITIES: Toronto;New York;Montreal   # Gluetun uses comma-separated
+      # SERVER_CITIES: "Toronto,New York,Montreal"
       # Optional: specific server or group
       # SERVER_NAME: us8481.nordvpn.com
-      OPENVPN_PORT_FORWARDING: off   # set to 'on' if you want port forwarding later
+      # set to 'on' if you want port forwarding later
+      OPENVPN_PORT_FORWARDING: "off"
       # Kill-switch & firewall (Gluetun's default is very strict)
-      FIREWALL: on
-      FIREWALL_VPN_INPUT_PORTS: ""   # leave empty unless you need specific inbound
+      FIREWALL: "on"
+      # leave empty unless you need specific inbound
+      FIREWALL_VPN_INPUT_PORTS: ""
       TZ: America/New_York
       # Logging
       LOG_LEVEL: info
       # Optional: allow LAN access (your traefik_public subnets)
-      EXTRA_SUBNETS: 192.168.12.0/24,192.168.13.0/24
+      EXTRA_SUBNETS: 192.168.12.0/24,192.168.13.0/24,10.0.0.0/16
       # Optional: health checks
-      HEALTHCHECK_ENABLED: on
+      HEALTHCHECK_ENABLED: "on"
     ports:
       # Expose qBittorrent web UI (via Gluetun)
       # Gluetun forwards 8168 from child container
